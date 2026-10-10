@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>おしゃべりルーム</title>
+<style>
+  html, body { margin:0; }
+  #app { min-height:100vh; display:flex; align-items:center; justify-content:center; font-family:"Hiragino Sans","Meiryo",sans-serif; color:#333; }
+  .card { width:100%; max-width:380px; background:#fff; border-radius:18px; box-shadow:0 6px 20px rgba(0,0,0,0.15); overflow:hidden; }
+
+  #entrance { padding:28px 24px; text-align:center; }
+  .logo { font-size:48px; }
+  #entrance h1 { margin:6px 0 4px; font-size:22px; }
+  .sub { margin:0 0 20px; font-size:13px; color:#888; }
+  label { display:block; text-align:left; font-size:12px; color:#666; margin:12px 0 4px; }
+  #entrance input { width:100%; box-sizing:border-box; padding:12px; font-size:16px; border:2px solid #ddd; border-radius:10px; outline:none; }
+  #entrance input:focus { border-color:#4caf50; }
+  .main-btn { width:100%; margin-top:22px; padding:13px; font-size:16px; font-weight:bold; color:#fff; background:#4caf50; border:none; border-radius:10px; cursor:pointer; }
+  .main-btn:hover { background:#43a047; }
+
+  #chat { width:100%; max-width:1180px; height:100vh; flex-direction:column; background:#7494c0; }
+  .header { background:#143563; color:#fff; padding:14px 16px; font-size:17px; font-weight:bold; text-align:left; }
+  #log { flex:1; min-height:0; overflow:auto; padding:14px; }
+  .inputrow { display:flex; align-items:center; gap:8px; padding:8px 10px; background:#f2f2f2; border-top:1px solid #ddd; }
+  .inputrow input { flex:1; padding:10px 14px; font-size:16px; border:none; border-radius:20px; background:#fff; outline:none; }
+  .send-btn { padding:10px 16px; font-size:15px; font-weight:bold; color:#fff; background:#143563; border:none; border-radius:20px; cursor:pointer; }
+
+  .row { display:flex; margin:10px 0; }
+  .row.me { justify-content:flex-end; }
+  .msg { display:flex; flex-direction:column; max-width:60%; }
+  .me .msg { align-items:flex-end; }
+  .name { font-size:11px; color:#eaf0f8; margin:0 6px 2px; }
+  .line { display:flex; align-items:flex-end; gap:5px; }
+  .me .line { flex-direction:row-reverse; }
+  .bubble { padding:10px 14px; border-radius:18px; color:#000; font-size:17px; line-height:1.4; word-break:break-word; }
+  .me .bubble { background:#8de055; border-top-right-radius:4px; }
+  .other .bubble { background:#ffffff; border-top-left-radius:4px; }
+  .time { font-size:10px; color:#eaf0f8; white-space:nowrap; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="entrance" class="card">
+    <div class="logo">☺︎</div>
+    <h1>ログイン</h1>
+    <p class="sub">ログインIDとユーザ名を入れてください</p>
+    <label>ログインID</label>
+    <input id="room" type="text" placeholder="例: ログインIDを入力">
+    <label>ユーザ名</label>
+    <input id="nick" type="text" placeholder="例: ユーザ名を入力" maxlength="20">
+    <button class="main-btn" onclick="enter()">ログイン</button>
+  </div>
+
+  <div id="chat" style="display:none;">
+    <div class="header" id="title"></div>
+    <div id="log"></div>
+    <div class="inputrow">
+      <input id="msg" type="text" placeholder="メッセージを入力" maxlength="500">
+      <button class="send-btn" onclick="send()">送信</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<script>
+firebase.initializeApp({
+  databaseURL: "https://my-chat-gogo-default-rtdb.asia-southeast1.firebasedatabase.app"
+});
+const db = firebase.database();
+
+const myId = "u" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+let roomName = "";
+let nickname = "";
+let roomRef = null;
+
+function enter() {
+  const name = document.getElementById("room").value.trim();
+  if (name === "") return;
+  roomName = name;
+  nickname = document.getElementById("nick").value.trim();
+  if (nickname === "") nickname = "名無しさん";
+
+  const key = roomName.replace(/[.#$\[\]\/]/g, "_");
+  roomRef = db.ref("rooms/" + key + "/messages");
+
+  document.getElementById("title").textContent = roomName;
+  document.getElementById("entrance").style.display = "none";
+  document.getElementById("chat").style.display = "flex";
+
+  startListening();
+}
+
+let listening = null;
+let midnightTimer = null;
+
+function startOfToday() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function startListening() {
+  if (listening) listening.off();
+  document.getElementById("log").innerHTML = "";
+  const since = startOfToday();
+
+  // 昨日以前のメッセージを消す
+  roomRef.orderByChild("time").endAt(since - 1).once("value", function(snap) {
+    snap.forEach(function(child) { child.ref.remove(); });
+  });
+
+  // 今日のメッセージだけを表示する
+  listening = roomRef.orderByChild("time").startAt(since).limitToLast(100);
+  listening.on("child_added", function(snap) {
+    const m = snap.val();
+    addMessage(m.uid === myId ? "me" : "other", m.name, m.text, m.time);
+  });
+
+  // 次の0時になったら、もう一度やり直す
+  if (midnightTimer) clearTimeout(midnightTimer);
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(24, 0, 0, 0);
+  midnightTimer = setTimeout(startListening, next - now + 1000);
+}
+
+function formatTime(ts) {
+  const d = ts ? new Date(ts) : new Date();
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  return h + ":" + m;
+}
+
+function addMessage(who, name, text, ts) {
+  const log = document.getElementById("log");
+
+  const row = document.createElement("div");
+  row.className = "row " + who;
+
+  const msg = document.createElement("div");
+  msg.className = "msg";
+
+  const nameTag = document.createElement("div");
+  nameTag.className = "name";
+  nameTag.textContent = name;
+
+  const line = document.createElement("div");
+  line.className = "line";
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.textContent = text;
+
+  const time = document.createElement("div");
+  time.className = "time";
+  time.textContent = formatTime(ts);
+
+  line.appendChild(bubble);
+  line.appendChild(time);
+  msg.appendChild(nameTag);
+  msg.appendChild(line);
+  row.appendChild(msg);
+  log.appendChild(row);
+  log.scrollTop = log.scrollHeight;
+}
+
+function send() {
+  const box = document.getElementById("msg");
+  const text = box.value.trim();
+  if (text === "" || roomRef === null) return;
+  box.value = "";
+
+  roomRef.push({
+    uid: myId,
+    name: nickname,
+    text: text,
+    time: firebase.database.ServerValue.TIMESTAMP
+  }).catch(function(err) {
+    alert("送信できませんでした: " + err.message);
+  });
+}
+
+document.getElementById("room").addEventListener("keydown", function(e) {
+  if (e.key === "Enter" && !e.isComposing) enter();
+});
+
+document.getElementById("nick").addEventListener("keydown", function(e) {
+  if (e.key === "Enter" && !e.isComposing) enter();
+});
+
+document.getElementById("msg").addEventListener("keydown", function(e) {
+  if (e.key === "Enter" && !e.isComposing) send();
+});
+</script>
+
+</body>
+</html>
