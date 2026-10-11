@@ -96,7 +96,9 @@
   <div id="adminLogin" class="card" style="display:none;">
     <div class="admin-box">
       <h1>管理者ログイン</h1>
-      <p class="sub">管理者のメールアドレスとパスワードを入れてください</p>
+      <p class="sub">ユーザ名と、管理者のメールアドレス・パスワードを入れてください</p>
+      <label>ユーザ名</label>
+      <input id="adminNick" type="text" maxlength="20" autocomplete="off">
       <label>メールアドレス</label>
       <input id="adminMail" type="email" autocomplete="off">
       <label>パスワード</label>
@@ -119,10 +121,10 @@
           <p id="adminMsg" class="admin-msg"></p>
         </div>
         <div class="admin-col">
-          <h1>ログイン失敗の記録</h1>
-          <p class="sub">消したい記録にチェックを入れてください</p>
+          <h1>ログイン履歴</h1>
+          <p class="sub">消したい履歴にチェックを入れてください</p>
           <div id="adminLogList" class="admin-log"></div>
-          <button class="main-btn danger" style="margin-top:0;" onclick="deleteSelectedLog()">選んだ記録を消す</button>
+          <button class="main-btn danger" style="margin-top:0;" onclick="deleteSelectedLog()">選んだ履歴を消す</button>
           <button class="admin-link" onclick="clearAdminLog()">全部消す</button>
         </div>
       </div>
@@ -354,24 +356,31 @@ function adminSignIn() {
   const mail = document.getElementById("adminMail").value.trim();
   const pass = document.getElementById("adminPass").value;
   const msg = document.getElementById("adminLoginMsg");
+  const nick = document.getElementById("adminNick").value.trim();
+  if (nick === "") {
+    msg.textContent = "ユーザ名を入れてください";
+    document.getElementById("adminNick").focus();
+    return;
+  }
   if (mail === "" || pass === "") return;
   msg.textContent = "確認中...";
   firebase.auth().signInWithEmailAndPassword(mail, pass).then(function() {
     document.getElementById("adminPass").value = "";
     document.getElementById("adminMsg").textContent = "";
     showScreen("adminPanel");
+    recordLogin("success", nick);
     loadAdminLog();
   }).catch(function(err) {
     msg.textContent = "ログインできませんでした (" + err.code + ")";
-    recordFailure(err.code);
+    recordLogin(err.code, nick);
   });
 }
 
-function recordFailure(code) {
+function recordLogin(code, nick) {
   db.ref("adminLog").push({
     time: firebase.database.ServerValue.TIMESTAMP,
     code: String(code || "unknown").slice(0, 60),
-    nick: document.getElementById("nick").value.trim().slice(0, 20)
+    nick: String(nick || "").slice(0, 20)
   });
 }
 
@@ -387,7 +396,7 @@ function loadAdminLog() {
     items.reverse();
     box.innerHTML = "";
     if (items.length === 0) {
-      box.textContent = "失敗の記録はありません";
+      box.textContent = "ログイン履歴はありません";
       return;
     }
     items.forEach(function(it) {
@@ -397,8 +406,13 @@ function loadAdminLog() {
       cb.value = it.key;
       const span = document.createElement("span");
       const t = new Date(it.v.time);
-      span.textContent = (t.getMonth() + 1) + "/" + t.getDate() + " " + formatTime(it.v.time) + "  " +
-        (it.v.nick ? "「" + it.v.nick + "」 " : "") + it.v.code;
+      const ok = it.v.code === "success";
+      const badge = document.createElement("b");
+      badge.textContent = ok ? "成功" : "失敗";
+      badge.style.color = ok ? "#2e7d32" : "#c62828";
+      span.appendChild(document.createTextNode((t.getMonth() + 1) + "/" + t.getDate() + " " + formatTime(it.v.time) + "  "));
+      span.appendChild(badge);
+      span.appendChild(document.createTextNode((it.v.nick ? "  「" + it.v.nick + "」" : "") + (ok ? "" : "  " + it.v.code)));
       lab.appendChild(cb);
       lab.appendChild(span);
       box.appendChild(lab);
@@ -411,17 +425,17 @@ function loadAdminLog() {
 function deleteSelectedLog() {
   const checks = document.querySelectorAll("#adminLogList input:checked");
   if (checks.length === 0) {
-    alert("消したい記録にチェックを入れてな");
+    alert("消したい履歴にチェックを入れてな");
     return;
   }
-  if (!confirm(checks.length + "件の記録を消します。ええですか?")) return;
+  if (!confirm(checks.length + "件の履歴を消します。ええですか?")) return;
   const updates = {};
   checks.forEach(function(c) { updates[c.value] = null; });
   db.ref("adminLog").update(updates);
 }
 
 function clearAdminLog() {
-  if (!confirm("失敗の記録を全部消します。ええですか?")) return;
+  if (!confirm("ログイン履歴を全部消します。ええですか?")) return;
   db.ref("adminLog").remove();
 }
 
