@@ -20,7 +20,8 @@
   .main-btn:hover { background:#43a047; }
 
   #chat { width:100%; max-width:1180px; height:100vh; flex-direction:column; background:#7494c0; }
-  .header { background:#143563; color:#fff; padding:14px 16px; font-size:17px; font-weight:bold; text-align:left; }
+  .header { background:#143563; color:#fff; padding:10px 16px; font-size:17px; font-weight:bold; text-align:left; display:flex; align-items:center; gap:8px; }
+  .back-btn { background:none; border:none; color:#fff; font-size:30px; line-height:1; padding:0 8px 4px 0; cursor:pointer; }
   #log { flex:1; min-height:0; overflow:auto; padding:14px; }
   .inputrow { display:flex; align-items:center; gap:8px; padding:8px 10px; background:#f2f2f2; border-top:1px solid #ddd; }
   .inputrow input { flex:1; padding:10px 14px; font-size:16px; border:none; border-radius:20px; background:#fff; outline:none; }
@@ -54,7 +55,10 @@
   </div>
 
   <div id="chat" style="display:none;">
-    <div class="header" id="title"></div>
+    <div class="header">
+      <button class="back-btn" onclick="leave()" aria-label="ログイン画面に戻る">‹</button>
+      <span id="title"></span>
+    </div>
     <div id="log"></div>
     <div class="inputrow">
       <input id="msg" type="text" placeholder="メッセージを入力" maxlength="500">
@@ -95,37 +99,24 @@ function enter() {
 }
 
 let listening = null;
-let midnightTimer = null;
-
-function startOfToday() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
 
 function startListening() {
   if (listening) listening.off();
   document.getElementById("log").innerHTML = "";
-  const since = startOfToday();
 
-  // 昨日以前のメッセージを消す
-  roomRef.orderByChild("time").endAt(since - 1).once("value", function(snap) {
-    snap.forEach(function(child) { child.ref.remove(); });
-  });
-
-  // 今日のメッセージだけを表示する
-  listening = roomRef.orderByChild("time").startAt(since).limitToLast(100);
+  listening = roomRef.limitToLast(100);
   listening.on("child_added", function(snap) {
     const m = snap.val();
     addMessage(m.uid === myId ? "me" : "other", m.name, m.text, m.time);
   });
+}
 
-  // 次の0時になったら、もう一度やり直す
-  if (midnightTimer) clearTimeout(midnightTimer);
-  const now = new Date();
-  const next = new Date(now);
-  next.setHours(24, 0, 0, 0);
-  midnightTimer = setTimeout(startListening, next - now + 1000);
+function leave() {
+  if (listening) { listening.off(); listening = null; }
+  roomRef = null;
+  document.getElementById("log").innerHTML = "";
+  document.getElementById("chat").style.display = "none";
+  document.getElementById("entrance").style.display = "block";
 }
 
 function formatTime(ts) {
