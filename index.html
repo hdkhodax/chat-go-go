@@ -109,7 +109,13 @@
 
 <script>
 firebase.initializeApp({
-  databaseURL: "https://my-chat-gogo-default-rtdb.asia-southeast1.firebasedatabase.app"
+  apiKey: "AIzaSyCMghUUZCVUxaTGW2Vel81fnpgG9VoXZ1E",
+  authDomain: "my-chat-gogo.firebaseapp.com",
+  databaseURL: "https://my-chat-gogo-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "my-chat-gogo",
+  storageBucket: "my-chat-gogo.firebasestorage.app",
+  messagingSenderId: "1093910430821",
+  appId: "1:1093910430821:web:ec6a8c6b3945af1b27328c"
 });
 const db = firebase.database();
 
@@ -237,8 +243,8 @@ function adminSignIn() {
     document.getElementById("adminPass").value = "";
     document.getElementById("adminMsg").textContent = "";
     showScreen("adminPanel");
-  }).catch(function() {
-    msg.textContent = "ログインできませんでした";
+  }).catch(function(err) {
+    msg.textContent = "ログインできませんでした (" + err.code + ")";
   });
 }
 
@@ -251,9 +257,9 @@ function adminDelete() {
   db.ref("rooms/" + key).remove().then(function() {
     msg.style.color = "#2e7d32";
     msg.textContent = "消しました";
-  }).catch(function() {
+  }).catch(function(err) {
     msg.style.color = "#c62828";
-    msg.textContent = "消せませんでした(Firebaseのルール設定を確認してな)";
+    msg.textContent = "消せませんでした (" + err.code + ")";
   });
 }
 
