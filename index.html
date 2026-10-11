@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>☺︎login☺︎</title>
+<title>おしゃべりルーム</title>
 <style>
   html, body { margin:0; }
   #app { min-height:100vh; display:flex; align-items:center; justify-content:center; font-family:"Hiragino Sans","Meiryo",sans-serif; color:#333; }
@@ -38,6 +38,12 @@
   .me .bubble { background:#8de055; border-top-right-radius:4px; }
   .other .bubble { background:#ffffff; border-top-left-radius:4px; }
   .time { font-size:10px; color:#eaf0f8; white-space:nowrap; }
+
+  .sys { text-align:center; margin:10px 0; }
+  .sys span { display:inline-block; background:rgba(0,0,0,0.25); color:#fff; font-size:12px; padding:4px 12px; border-radius:12px; }
+  .meta { display:flex; flex-direction:column; align-items:flex-start; }
+  .me .meta { align-items:flex-end; }
+  .read { font-size:10px; color:#eaf0f8; white-space:nowrap; }
 
   .admin-row { text-align:right; margin-top:16px; }
   .admin-link { background:none; border:none; color:#888; font-size:12px; text-decoration:underline; cursor:pointer; padding:4px; }
@@ -133,30 +139,108 @@ function enter() {
 
   const key = roomName.replace(/[.#$\[\]\/]/g, "_");
   roomRef = db.ref("rooms/" + key + "/messages");
+  readsRef = db.ref("rooms/" + key + "/reads");
+  myKey = nickname.replace(/[.#$\[\]\/]/g, "_");
 
   document.getElementById("title").textContent = roomName;
   document.getElementById("entrance").style.display = "none";
   document.getElementById("chat").style.display = "flex";
 
   startListening();
+  startReads();
+  sendSystem(nickname + "さんが入室しました");
 }
 
 let listening = null;
+let readsRef = null;
+let myKey = "";
+let reads = {};
+let myMsgs = [];
+let markTimer = null;
 
 function startListening() {
   if (listening) listening.off();
   document.getElementById("log").innerHTML = "";
+  myMsgs = [];
 
   listening = roomRef.limitToLast(100);
   listening.on("child_added", function(snap) {
     const m = snap.val();
-    addMessage(m.name === nickname ? "me" : "other", m.name, m.text, m.time);
+    if (m.type === "system") {
+      addSystem(m.text);
+      return;
+    }
+    const who = m.name === nickname ? "me" : "other";
+    const readEl = addMessage(who, m.name, m.text, m.time);
+    if (who === "me") {
+      myMsgs.push({ el: readEl, time: m.time });
+      updateReadMarks();
+    } else {
+      scheduleMarkRead();
+    }
   });
 }
+
+function addSystem(text) {
+  const log = document.getElementById("log");
+  const row = document.createElement("div");
+  row.className = "sys";
+  const s = document.createElement("span");
+  s.textContent = text;
+  row.appendChild(s);
+  log.appendChild(row);
+  log.scrollTop = log.scrollHeight;
+}
+
+function sendSystem(text) {
+  roomRef.push({
+    uid: myId,
+    name: nickname,
+    text: text,
+    time: firebase.database.ServerValue.TIMESTAMP,
+    type: "system"
+  });
+}
+
+function startReads() {
+  reads = {};
+  readsRef.on("value", function(snap) {
+    reads = snap.val() || {};
+    updateReadMarks();
+  });
+  scheduleMarkRead();
+}
+
+function scheduleMarkRead() {
+  if (markTimer) clearTimeout(markTimer);
+  markTimer = setTimeout(markRead, 400);
+}
+
+function markRead() {
+  if (!readsRef || document.visibilityState !== "visible") return;
+  readsRef.child(myKey).set(firebase.database.ServerValue.TIMESTAMP);
+}
+
+function updateReadMarks() {
+  myMsgs.forEach(function(item) {
+    let n = 0;
+    Object.keys(reads).forEach(function(k) {
+      if (k !== myKey && reads[k] >= item.time) n++;
+    });
+    item.el.textContent = n > 0 ? "既読 " + n : "";
+  });
+}
+
+document.addEventListener("visibilitychange", function() {
+  if (document.visibilityState === "visible") scheduleMarkRead();
+});
 
 function leave() {
   if (listening) { listening.off(); listening = null; }
   roomRef = null;
+  if (readsRef) { readsRef.off(); readsRef = null; }
+  reads = {};
+  myMsgs = [];
   document.getElementById("log").innerHTML = "";
   document.getElementById("chat").style.display = "none";
   document.getElementById("entrance").style.display = "block";
@@ -193,13 +277,24 @@ function addMessage(who, name, text, ts) {
   time.className = "time";
   time.textContent = formatTime(ts);
 
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  let readEl = null;
+  if (who === "me") {
+    readEl = document.createElement("div");
+    readEl.className = "read";
+    meta.appendChild(readEl);
+  }
+  meta.appendChild(time);
+
   line.appendChild(bubble);
-  line.appendChild(time);
+  line.appendChild(meta);
   msg.appendChild(nameTag);
   msg.appendChild(line);
   row.appendChild(msg);
   log.appendChild(row);
   log.scrollTop = log.scrollHeight;
+  return readEl;
 }
 
 function send() {
