@@ -56,6 +56,15 @@
   .main-btn.danger { background:#e53935; }
   .main-btn.danger:hover { background:#c62828; }
   .admin-msg { font-size:13px; min-height:18px; margin:12px 0 0; color:#c62828; }
+  .admin-h2 { font-size:15px; margin:22px 0 8px; padding-top:16px; border-top:1px solid #eee; }
+  .admin-log { text-align:left; font-size:12px; color:#555; max-height:150px; overflow:auto; background:#f7f7f7; border-radius:8px; padding:8px; }
+  .admin-log div { margin:3px 0; }
+  #adminPanel { max-width:780px; }
+  .admin-cols { display:flex; gap:24px; flex-wrap:wrap; }
+  .admin-col { flex:1; min-width:260px; }
+  .admin-col .admin-log { height:200px; max-height:none; margin-bottom:14px; }
+  .admin-log label { display:flex; gap:8px; align-items:center; margin:6px 0; font-size:12px; color:#555; }
+  .admin-log input { width:auto; padding:0; margin:0; border:none; }
 </style>
 </head>
 <body>
@@ -100,12 +109,23 @@
 
   <div id="adminPanel" class="card" style="display:none;">
     <div class="admin-box">
-      <h1>履歴を消す</h1>
-      <p class="sub">履歴を消したいルームIDを入れてください</p>
-      <label>ルームID</label>
-      <input id="adminRoom" type="text">
-      <button class="main-btn danger" onclick="adminDelete()">履歴を消す</button>
-      <p id="adminMsg" class="admin-msg"></p>
+      <div class="admin-cols">
+        <div class="admin-col">
+          <h1>履歴を消す</h1>
+          <p class="sub">履歴を消したいルームIDを入れてください</p>
+          <label>ルームID</label>
+          <input id="adminRoom" type="text">
+          <button class="main-btn danger" onclick="adminDelete()">履歴を消す</button>
+          <p id="adminMsg" class="admin-msg"></p>
+        </div>
+        <div class="admin-col">
+          <h1>ログイン失敗の記録</h1>
+          <p class="sub">消したい記録にチェックを入れてください</p>
+          <div id="adminLogList" class="admin-log"></div>
+          <button class="main-btn danger" style="margin-top:0;" onclick="deleteSelectedLog()">選んだ記録を消す</button>
+          <button class="admin-link" onclick="clearAdminLog()">全部消す</button>
+        </div>
+      </div>
       <button class="admin-link" onclick="adminLogout()">ログアウトして戻る</button>
     </div>
   </div>
@@ -340,9 +360,69 @@ function adminSignIn() {
     document.getElementById("adminPass").value = "";
     document.getElementById("adminMsg").textContent = "";
     showScreen("adminPanel");
+    loadAdminLog();
   }).catch(function(err) {
     msg.textContent = "ログインできませんでした (" + err.code + ")";
+    recordFailure(err.code);
   });
+}
+
+function recordFailure(code) {
+  db.ref("adminLog").push({
+    time: firebase.database.ServerValue.TIMESTAMP,
+    code: String(code || "unknown").slice(0, 60),
+    nick: document.getElementById("nick").value.trim().slice(0, 20)
+  });
+}
+
+let adminLogRef = null;
+
+function loadAdminLog() {
+  const box = document.getElementById("adminLogList");
+  if (adminLogRef) adminLogRef.off();
+  adminLogRef = db.ref("adminLog").limitToLast(20);
+  adminLogRef.on("value", function(snap) {
+    const items = [];
+    snap.forEach(function(c) { items.push({ key: c.key, v: c.val() }); });
+    items.reverse();
+    box.innerHTML = "";
+    if (items.length === 0) {
+      box.textContent = "失敗の記録はありません";
+      return;
+    }
+    items.forEach(function(it) {
+      const lab = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = it.key;
+      const span = document.createElement("span");
+      const t = new Date(it.v.time);
+      span.textContent = (t.getMonth() + 1) + "/" + t.getDate() + " " + formatTime(it.v.time) + "  " +
+        (it.v.nick ? "「" + it.v.nick + "」 " : "") + it.v.code;
+      lab.appendChild(cb);
+      lab.appendChild(span);
+      box.appendChild(lab);
+    });
+  }, function() {
+    box.textContent = "記録を読み込めませんでした";
+  });
+}
+
+function deleteSelectedLog() {
+  const checks = document.querySelectorAll("#adminLogList input:checked");
+  if (checks.length === 0) {
+    alert("消したい記録にチェックを入れてな");
+    return;
+  }
+  if (!confirm(checks.length + "件の記録を消します。ええですか?")) return;
+  const updates = {};
+  checks.forEach(function(c) { updates[c.value] = null; });
+  db.ref("adminLog").update(updates);
+}
+
+function clearAdminLog() {
+  if (!confirm("失敗の記録を全部消します。ええですか?")) return;
+  db.ref("adminLog").remove();
 }
 
 function adminDelete() {
@@ -361,6 +441,7 @@ function adminDelete() {
 }
 
 function adminLogout() {
+  if (adminLogRef) { adminLogRef.off(); adminLogRef = null; }
   firebase.auth().signOut().then(function() {
     showScreen("entrance");
   });
