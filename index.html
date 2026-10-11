@@ -43,6 +43,10 @@
 
   .sys { text-align:center; margin:10px 0; }
   .sys span { display:inline-block; background:rgba(0,0,0,0.25); color:#fff; font-size:12px; padding:4px 12px; border-radius:12px; }
+  .emoji-btn { background:none; border:none; font-size:22px; line-height:1; padding:0 2px; cursor:pointer; }
+  .emoji-panel { display:none; flex-wrap:wrap; gap:2px; padding:8px; background:#f2f2f2; border-top:1px solid #ddd; max-height:130px; overflow:auto; }
+  .emoji-item { background:none; border:none; font-size:24px; line-height:1; padding:5px; cursor:pointer; }
+  .bell-btn { margin-left:auto; background:none; border:none; color:#fff; font-size:20px; line-height:1; padding:4px 2px; cursor:pointer; }
   .meta { display:flex; flex-direction:column; align-items:flex-start; }
   .me .meta { align-items:flex-end; }
   .read { font-size:10px; color:#eaf0f8; white-space:nowrap; }
@@ -65,6 +69,9 @@
   .admin-col .admin-log { height:200px; max-height:none; margin-bottom:14px; }
   .admin-log label { display:flex; gap:8px; align-items:center; margin:6px 0; font-size:12px; color:#555; }
   .admin-log input { width:auto; padding:0; margin:0; border:none; }
+  .room-row { display:flex; align-items:center; gap:6px; margin:6px 0; }
+  .admin-log .room-row label { flex:1; margin:0; }
+  .mini-btn { font-size:11px; padding:4px 9px; border:1px solid #143563; color:#143563; background:#fff; border-radius:12px; cursor:pointer; white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -75,9 +82,9 @@
     <h1>ログイン</h1>
     <p class="sub">ログインIDとユーザ名を入れてください</p>
     <label>ログインID</label>
-    <input id="room" type="text" placeholder="ログインIDを入力">
+    <input id="room" type="text" placeholder="例: ログインIDを入力">
     <label>ユーザ名</label>
-    <input id="nick" type="text" placeholder="ユーザ名を入力" maxlength="20">
+    <input id="nick" type="text" placeholder="例: ユーザ名を入力" maxlength="20">
     <button class="main-btn" onclick="enter()">ログイン</button>
     <div class="admin-row"><button class="admin-link" onclick="showAdminLogin()">管理者専用ログイン</button></div>
   </div>
@@ -86,9 +93,12 @@
     <div class="header">
       <button class="back-btn" onclick="leave()" aria-label="ログイン画面に戻る">‹</button>
       <span id="title"></span>
+      <button class="bell-btn" id="bell" onclick="toggleSound()" aria-label="通知音のオン・オフ">🔔</button>
     </div>
     <div id="log"></div>
+    <div id="emojiPanel" class="emoji-panel"></div>
     <div class="inputrow">
+      <button class="emoji-btn" type="button" onclick="toggleEmoji()" aria-label="絵文字">😀</button>
       <input id="msg" type="text" placeholder="メッセージを入力" maxlength="500">
       <button class="send-btn" onclick="send()">送信</button>
     </div>
@@ -154,26 +164,68 @@ let roomName = "";
 let nickname = "";
 let roomRef = null;
 
+let fromAdminMode = false;
+let viewMode = false;
+
 function enter() {
   const name = document.getElementById("room").value.trim();
   if (name === "") return;
+  let nick = document.getElementById("nick").value.trim();
+  if (nick === "") nick = "名無しさん";
+  enterRoom(name, nick, false, false);
+}
+
+function enterRoom(name, nick, fromAdmin, viewOnly) {
   roomName = name;
-  nickname = document.getElementById("nick").value.trim();
-  if (nickname === "") nickname = "名無しさん";
+  nickname = nick;
+  fromAdminMode = fromAdmin;
+  viewMode = viewOnly;
 
   const key = roomName.replace(/[.#$\[\]\/]/g, "_");
   roomRef = db.ref("rooms/" + key + "/messages");
-  readsRef = db.ref("rooms/" + key + "/reads");
+  readsRef = viewOnly ? null : db.ref("rooms/" + key + "/reads");
   myKey = nickname.replace(/[.#$\[\]\/]/g, "_");
 
-  document.getElementById("title").textContent = roomName;
-  document.getElementById("entrance").style.display = "none";
+  document.getElementById("title").textContent = roomName + (viewOnly ? "(閲覧のみ)" : "");
+  document.querySelector(".inputrow").style.display = viewOnly ? "none" : "flex";
+  document.getElementById("emojiPanel").style.display = "none";
+  ["entrance", "adminLogin", "adminPanel"].forEach(function(x) {
+    document.getElementById(x).style.display = "none";
+  });
   document.getElementById("chat").style.display = "flex";
 
+  unlockAudio();
   startListening();
-  startReads();
-  sendSystem(nickname + "さんが入室しました");
+  if (!viewOnly) {
+    startReads();
+    sendSystem(nickname + "さんが入室しました");
+  }
 }
+
+const EMOJIS = ["😀","😂","🤣","😊","😍","😘","😎","🥹","🥺","😭","😡","😴","🤔","😅","🙄","😇","👍","👏","🙏","🙌","💪","🎉","❤️","🔥","✨","💯","🍀","🌸","🍙","☕"];
+
+function buildEmojiPanel() {
+  const p = document.getElementById("emojiPanel");
+  EMOJIS.forEach(function(e) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "emoji-item";
+    b.textContent = e;
+    b.onclick = function() {
+      const box = document.getElementById("msg");
+      if (box.value.length + e.length <= 500) box.value += e;
+      box.focus();
+    };
+    p.appendChild(b);
+  });
+}
+
+function toggleEmoji() {
+  const p = document.getElementById("emojiPanel");
+  p.style.display = (p.style.display === "flex") ? "none" : "flex";
+}
+
+buildEmojiPanel();
 
 let listening = null;
 let readsRef = null;
@@ -181,9 +233,46 @@ let myKey = "";
 let reads = {};
 let myMsgs = [];
 let markTimer = null;
+let loaded = false;
+let soundOn = true;
+let audioCtx = null;
+
+function unlockAudio() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch (e) {}
+}
+
+function playPop() {
+  if (!soundOn || !audioCtx) return;
+  try {
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(320, t);
+    osc.frequency.exponentialRampToValueAtTime(900, t + 0.09);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.35, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.18);
+  } catch (e) {}
+}
+
+function toggleSound() {
+  soundOn = !soundOn;
+  document.getElementById("bell").textContent = soundOn ? "🔔" : "🔕";
+  unlockAudio();
+  if (soundOn) playPop();
+}
 
 function startListening() {
   if (listening) listening.off();
+  loaded = false;
   document.getElementById("log").innerHTML = "";
   myMsgs = [];
 
@@ -201,8 +290,10 @@ function startListening() {
       updateReadMarks();
     } else {
       scheduleMarkRead();
+      if (loaded && !viewMode) playPop();
     }
   });
+  listening.once("value", function() { loaded = true; });
 }
 
 function addSystem(text) {
@@ -267,7 +358,11 @@ function leave() {
   myMsgs = [];
   document.getElementById("log").innerHTML = "";
   document.getElementById("chat").style.display = "none";
-  document.getElementById("entrance").style.display = "block";
+  document.querySelector(".inputrow").style.display = "flex";
+  document.getElementById("emojiPanel").style.display = "none";
+  showScreen(fromAdminMode ? "adminPanel" : "entrance");
+  fromAdminMode = false;
+  viewMode = false;
 }
 
 function formatTime(ts) {
@@ -485,6 +580,9 @@ function loadAdminRooms() {
       return;
     }
     rooms.forEach(function(r) {
+      const row = document.createElement("div");
+      row.className = "room-row";
+
       const lab = document.createElement("label");
       const cb = document.createElement("input");
       cb.type = "checkbox";
@@ -494,7 +592,23 @@ function loadAdminRooms() {
       span.textContent = r.key + "(メッセージ " + r.count + "件)";
       lab.appendChild(cb);
       lab.appendChild(span);
-      box.appendChild(lab);
+
+      const viewBtn = document.createElement("button");
+      viewBtn.type = "button";
+      viewBtn.className = "mini-btn";
+      viewBtn.textContent = "見る";
+      viewBtn.onclick = function() { enterRoom(r.key, "", true, true); };
+
+      const joinBtn = document.createElement("button");
+      joinBtn.type = "button";
+      joinBtn.className = "mini-btn";
+      joinBtn.textContent = "入る";
+      joinBtn.onclick = function() { enterRoom(r.key, adminName, true, false); };
+
+      row.appendChild(lab);
+      row.appendChild(viewBtn);
+      row.appendChild(joinBtn);
+      box.appendChild(row);
     });
   }, function() {
     box.textContent = "ルームを読み込めませんでした";
