@@ -113,11 +113,11 @@
     <div class="admin-box">
       <div class="admin-cols">
         <div class="admin-col">
-          <h1>履歴を消す</h1>
-          <p class="sub">履歴を消したいルームIDを入れてください</p>
-          <label>ルームID</label>
-          <input id="adminRoom" type="text">
-          <button class="main-btn danger" onclick="adminDelete()">履歴を消す</button>
+          <h1>ルーム一覧</h1>
+          <p class="sub">消したいルームにチェックを入れてください</p>
+          <div id="adminRoomList" class="admin-log"></div>
+          <button class="main-btn danger" style="margin-top:0;" onclick="deleteSelectedRooms()">選んだルームを消す</button>
+          <button class="admin-link" onclick="deleteAllRooms()">全部消す</button>
           <p id="adminMsg" class="admin-msg"></p>
         </div>
         <div class="admin-col">
@@ -368,8 +368,10 @@ function adminSignIn() {
     document.getElementById("adminPass").value = "";
     document.getElementById("adminMsg").textContent = "";
     showScreen("adminPanel");
+    adminName = nick;
     recordLogin("success", nick);
     loadAdminLog();
+    loadAdminRooms();
   }).catch(function(err) {
     msg.textContent = "ログインできませんでした (" + err.code + ")";
     recordLogin(err.code, nick);
@@ -394,6 +396,8 @@ function loadAdminLog() {
     const items = [];
     snap.forEach(function(c) { items.push({ key: c.key, v: c.val() }); });
     items.reverse();
+    const checkedLog = {};
+    box.querySelectorAll("input:checked").forEach(function(i) { checkedLog[i.value] = true; });
     box.innerHTML = "";
     if (items.length === 0) {
       box.textContent = "ログイン履歴はありません";
@@ -404,15 +408,32 @@ function loadAdminLog() {
       const cb = document.createElement("input");
       cb.type = "checkbox";
       cb.value = it.key;
+      cb.checked = !!checkedLog[it.key];
       const span = document.createElement("span");
       const t = new Date(it.v.time);
-      const ok = it.v.code === "success";
+      const code = it.v.code;
+      let label = "失敗";
+      let color = "#c62828";
+      let tail = "  " + code;
+      if (code === "success") {
+        label = "成功";
+        color = "#2e7d32";
+        tail = "";
+      } else if (code === "delete-all") {
+        label = "削除";
+        color = "#e65100";
+        tail = "  全てのルームを削除";
+      } else if (code === "delete-rooms") {
+        label = "削除";
+        color = "#e65100";
+        tail = "  " + (it.v.detail || "") + "のルームを削除";
+      }
       const badge = document.createElement("b");
-      badge.textContent = ok ? "成功" : "失敗";
-      badge.style.color = ok ? "#2e7d32" : "#c62828";
+      badge.textContent = label;
+      badge.style.color = color;
       span.appendChild(document.createTextNode((t.getMonth() + 1) + "/" + t.getDate() + " " + formatTime(it.v.time) + "  "));
       span.appendChild(badge);
-      span.appendChild(document.createTextNode((it.v.nick ? "  「" + it.v.nick + "」" : "") + (ok ? "" : "  " + it.v.code)));
+      span.appendChild(document.createTextNode((it.v.nick ? "  「" + it.v.nick + "」" : "") + tail));
       lab.appendChild(cb);
       lab.appendChild(span);
       box.appendChild(lab);
@@ -439,23 +460,95 @@ function clearAdminLog() {
   db.ref("adminLog").remove();
 }
 
-function adminDelete() {
-  const name = document.getElementById("adminRoom").value.trim();
+let adminName = "";
+let adminRoomsRef = null;
+
+function loadAdminRooms() {
+  const box = document.getElementById("adminRoomList");
+  if (adminRoomsRef) adminRoomsRef.off();
+  adminRoomsRef = db.ref("rooms");
+  adminRoomsRef.on("value", function(snap) {
+    const checked = {};
+    box.querySelectorAll("input:checked").forEach(function(i) { checked[i.value] = true; });
+    box.innerHTML = "";
+    const rooms = [];
+    snap.forEach(function(c) {
+      let count = 0;
+      c.child("messages").forEach(function(m) {
+        const v = m.val();
+        if (v && v.type !== "system") count++;
+      });
+      rooms.push({ key: c.key, count: count });
+    });
+    if (rooms.length === 0) {
+      box.textContent = "ルームはありません";
+      return;
+    }
+    rooms.forEach(function(r) {
+      const lab = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = r.key;
+      cb.checked = !!checked[r.key];
+      const span = document.createElement("span");
+      span.textContent = r.key + "(メッセージ " + r.count + "件)";
+      lab.appendChild(cb);
+      lab.appendChild(span);
+      box.appendChild(lab);
+    });
+  }, function() {
+    box.textContent = "ルームを読み込めませんでした";
+  });
+}
+
+function recordAdminAction(code, detail) {
+  const rec = {
+    time: firebase.database.ServerValue.TIMESTAMP,
+    code: code,
+    nick: adminName.slice(0, 20)
+  };
+  if (detail) rec.detail = String(detail).slice(0, 200);
+  db.ref("adminLog").push(rec);
+}
+
+function showAdminResult(ok, text) {
   const msg = document.getElementById("adminMsg");
-  if (name === "") return;
-  if (!confirm("ルーム「" + name + "」の履歴を全部消します。元に戻せません。ええですか?")) return;
-  const key = name.replace(/[.#$\[\]\/]/g, "_");
-  db.ref("rooms/" + key).remove().then(function() {
-    msg.style.color = "#2e7d32";
-    msg.textContent = "消しました";
+  msg.style.color = ok ? "#2e7d32" : "#c62828";
+  msg.textContent = text;
+}
+
+function deleteSelectedRooms() {
+  const checks = document.querySelectorAll("#adminRoomList input:checked");
+  if (checks.length === 0) {
+    alert("消したいルームにチェックを入れてな");
+    return;
+  }
+  const keys = [];
+  checks.forEach(function(c) { keys.push(c.value); });
+  if (!confirm(keys.length + "個のルームの履歴を消します。元に戻せません。ええですか?")) return;
+  const updates = {};
+  keys.forEach(function(k) { updates[k] = null; });
+  db.ref("rooms").update(updates).then(function() {
+    recordAdminAction("delete-rooms", keys.join("、"));
+    showAdminResult(true, "消しました");
   }).catch(function(err) {
-    msg.style.color = "#c62828";
-    msg.textContent = "消せませんでした (" + err.code + ")";
+    showAdminResult(false, "消せませんでした (" + err.code + ")");
+  });
+}
+
+function deleteAllRooms() {
+  if (!confirm("全部のルームの履歴を消します。元に戻せません。ええですか?")) return;
+  db.ref("rooms").remove().then(function() {
+    recordAdminAction("delete-all", "");
+    showAdminResult(true, "消しました");
+  }).catch(function(err) {
+    showAdminResult(false, "消せませんでした (" + err.code + ")");
   });
 }
 
 function adminLogout() {
   if (adminLogRef) { adminLogRef.off(); adminLogRef = null; }
+  if (adminRoomsRef) { adminRoomsRef.off(); adminRoomsRef = null; }
   firebase.auth().signOut().then(function() {
     showScreen("entrance");
   });
