@@ -38,6 +38,16 @@
   .me .bubble { background:#8de055; border-top-right-radius:4px; }
   .other .bubble { background:#ffffff; border-top-left-radius:4px; }
   .time { font-size:10px; color:#eaf0f8; white-space:nowrap; }
+
+  .admin-row { text-align:right; margin-top:16px; }
+  .admin-link { background:none; border:none; color:#888; font-size:12px; text-decoration:underline; cursor:pointer; padding:4px; }
+  .admin-box { padding:28px 24px; text-align:center; }
+  .admin-box h1 { margin:6px 0 4px; font-size:22px; }
+  .admin-box input { width:100%; box-sizing:border-box; padding:12px; font-size:16px; border:2px solid #ddd; border-radius:10px; outline:none; }
+  .admin-box input:focus { border-color:#143563; }
+  .main-btn.danger { background:#e53935; }
+  .main-btn.danger:hover { background:#c62828; }
+  .admin-msg { font-size:13px; min-height:18px; margin:12px 0 0; color:#c62828; }
 </style>
 </head>
 <body>
@@ -52,6 +62,7 @@
     <label>ユーザ名</label>
     <input id="nick" type="text" placeholder="例: ユーザ名を入力" maxlength="20">
     <button class="main-btn" onclick="enter()">ログイン</button>
+    <div class="admin-row"><button class="admin-link" onclick="showAdminLogin()">管理者専用ログイン</button></div>
   </div>
 
   <div id="chat" style="display:none;">
@@ -65,10 +76,36 @@
       <button class="send-btn" onclick="send()">送信</button>
     </div>
   </div>
+  <div id="adminLogin" class="card" style="display:none;">
+    <div class="admin-box">
+      <h1>管理者ログイン</h1>
+      <p class="sub">管理者のメールアドレスとパスワードを入れてください</p>
+      <label>メールアドレス</label>
+      <input id="adminMail" type="email" autocomplete="off">
+      <label>パスワード</label>
+      <input id="adminPass" type="password" autocomplete="off">
+      <button class="main-btn" onclick="adminSignIn()">ログイン</button>
+      <p id="adminLoginMsg" class="admin-msg"></p>
+      <button class="admin-link" onclick="adminBack()">‹ 戻る</button>
+    </div>
+  </div>
+
+  <div id="adminPanel" class="card" style="display:none;">
+    <div class="admin-box">
+      <h1>履歴を消す</h1>
+      <p class="sub">履歴を消したいルームIDを入れてください</p>
+      <label>ルームID</label>
+      <input id="adminRoom" type="text">
+      <button class="main-btn danger" onclick="adminDelete()">履歴を消す</button>
+      <p id="adminMsg" class="admin-msg"></p>
+      <button class="admin-link" onclick="adminLogout()">ログアウトして戻る</button>
+    </div>
+  </div>
 </div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 
 <script>
 firebase.initializeApp({
@@ -107,7 +144,7 @@ function startListening() {
   listening = roomRef.limitToLast(100);
   listening.on("child_added", function(snap) {
     const m = snap.val();
-    addMessage(m.uid === myId ? "me" : "other", m.name, m.text, m.time);
+    addMessage(m.name === nickname ? "me" : "other", m.name, m.text, m.time);
   });
 }
 
@@ -174,6 +211,61 @@ function send() {
     alert("送信できませんでした: " + err.message);
   });
 }
+
+function showScreen(id) {
+  ["entrance", "adminLogin", "adminPanel"].forEach(function(x) {
+    document.getElementById(x).style.display = (x === id) ? "block" : "none";
+  });
+}
+
+function showAdminLogin() {
+  document.getElementById("adminLoginMsg").textContent = "";
+  showScreen("adminLogin");
+}
+
+function adminBack() {
+  showScreen("entrance");
+}
+
+function adminSignIn() {
+  const mail = document.getElementById("adminMail").value.trim();
+  const pass = document.getElementById("adminPass").value;
+  const msg = document.getElementById("adminLoginMsg");
+  if (mail === "" || pass === "") return;
+  msg.textContent = "確認中...";
+  firebase.auth().signInWithEmailAndPassword(mail, pass).then(function() {
+    document.getElementById("adminPass").value = "";
+    document.getElementById("adminMsg").textContent = "";
+    showScreen("adminPanel");
+  }).catch(function() {
+    msg.textContent = "ログインできませんでした";
+  });
+}
+
+function adminDelete() {
+  const name = document.getElementById("adminRoom").value.trim();
+  const msg = document.getElementById("adminMsg");
+  if (name === "") return;
+  if (!confirm("ルーム「" + name + "」の履歴を全部消します。元に戻せません。ええですか?")) return;
+  const key = name.replace(/[.#$\[\]\/]/g, "_");
+  db.ref("rooms/" + key).remove().then(function() {
+    msg.style.color = "#2e7d32";
+    msg.textContent = "消しました";
+  }).catch(function() {
+    msg.style.color = "#c62828";
+    msg.textContent = "消せませんでした(Firebaseのルール設定を確認してな)";
+  });
+}
+
+function adminLogout() {
+  firebase.auth().signOut().then(function() {
+    showScreen("entrance");
+  });
+}
+
+document.getElementById("adminPass").addEventListener("keydown", function(e) {
+  if (e.key === "Enter" && !e.isComposing) adminSignIn();
+});
 
 document.getElementById("room").addEventListener("keydown", function(e) {
   if (e.key === "Enter" && !e.isComposing) enter();
