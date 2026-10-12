@@ -43,13 +43,24 @@
 
   .sys { text-align:center; margin:10px 0; }
   .sys span { display:inline-block; background:rgba(0,0,0,0.25); color:#fff; font-size:12px; padding:4px 12px; border-radius:12px; }
-  .emoji-btn { background:none; border:none; font-size:22px; line-height:1; padding:0 2px; cursor:pointer; }
+  .emoji-btn { background:none; border:none; color:#143563; font-size:26px; line-height:1; padding:0 2px; cursor:pointer; }
   .emoji-panel { display:none; flex-wrap:wrap; gap:2px; padding:8px; background:#f2f2f2; border-top:1px solid #ddd; max-height:130px; overflow:auto; }
   .emoji-item { background:none; border:none; font-size:24px; line-height:1; padding:5px; cursor:pointer; }
+  .row.cont { margin-top:2px; }
+  .row.notlast { margin-bottom:2px; }
+  .row.cont .name { display:none; }
+  .row.cont .bubble { border-top-left-radius:18px; border-top-right-radius:18px; }
+  .row.notlast .meta { display:none; }
+  .del-btn { align-self:center; margin-left:6px; background:rgba(0,0,0,0.3); color:#fff; border:none; border-radius:10px; font-size:11px; padding:3px 8px; cursor:pointer; white-space:nowrap; }
+  .sys .del-btn { margin-left:8px; }
   .bell-btn { margin-left:auto; background:none; border:none; color:#fff; font-size:20px; line-height:1; padding:4px 2px; cursor:pointer; }
   .meta { display:flex; flex-direction:column; align-items:flex-start; }
   .me .meta { align-items:flex-end; }
   .read { font-size:10px; color:#eaf0f8; white-space:nowrap; }
+  .row.cont { margin-top:2px; }
+  .row.cont .name { display:none; }
+  .row.cont .bubble { border-top-left-radius:18px; border-top-right-radius:18px; }
+  .del-btn { flex:none; align-self:center; width:22px; height:22px; margin-left:6px; border:none; border-radius:50%; background:rgba(255,255,255,0.85); color:#c62828; font-size:13px; line-height:1; cursor:pointer; padding:0; }
 
   .admin-row { text-align:right; margin-top:16px; }
   .admin-link { background:none; border:none; color:#888; font-size:12px; text-decoration:underline; cursor:pointer; padding:4px; }
@@ -98,7 +109,7 @@
     <div id="log"></div>
     <div id="emojiPanel" class="emoji-panel"></div>
     <div class="inputrow">
-      <button class="emoji-btn" type="button" onclick="toggleEmoji()" aria-label="絵文字">😀</button>
+      <button class="emoji-btn" type="button" onclick="toggleEmoji()" aria-label="絵文字">☺︎</button>
       <input id="msg" type="text" placeholder="メッセージを入力" maxlength="500">
       <button class="send-btn" onclick="send()">送信</button>
     </div>
@@ -199,6 +210,7 @@ function enterRoom(name, nick, fromAdmin, viewOnly) {
   if (!viewOnly) {
     startReads();
     sendSystem(nickname + "さんが入室しました");
+    armLeave();
   }
 }
 
@@ -234,6 +246,26 @@ let reads = {};
 let myMsgs = [];
 let markTimer = null;
 let loaded = false;
+let lastRowInfo = null;
+let rowsByKey = {};
+let leaveRef = null;
+
+function armLeave() {
+  if (viewMode || !roomRef) return;
+  if (leaveRef) leaveRef.onDisconnect().cancel();
+  leaveRef = roomRef.push();
+  leaveRef.onDisconnect().set({
+    uid: myId,
+    name: nickname,
+    text: nickname + "さんが退室しました",
+    time: firebase.database.ServerValue.TIMESTAMP,
+    type: "system"
+  });
+}
+
+db.ref(".info/connected").on("value", function(snap) {
+  if (snap.val() === true) armLeave();
+});
 let soundOn = true;
 let audioCtx = null;
 
@@ -275,25 +307,56 @@ function startListening() {
   loaded = false;
   document.getElementById("log").innerHTML = "";
   myMsgs = [];
+  rowsByKey = {};
+  lastRowInfo = null;
 
   listening = roomRef.limitToLast(100);
   listening.on("child_added", function(snap) {
     const m = snap.val();
+    let row;
     if (m.type === "system") {
-      addSystem(m.text);
-      return;
-    }
-    const who = m.name === nickname ? "me" : "other";
-    const readEl = addMessage(who, m.name, m.text, m.time);
-    if (who === "me") {
-      myMsgs.push({ el: readEl, time: m.time });
-      updateReadMarks();
+      row = addSystem(m.text);
     } else {
-      scheduleMarkRead();
-      if (loaded && !viewMode) playPop();
+      const who = m.name === nickname ? "me" : "other";
+      row = addMessage(who, m.name, m.text, m.time);
+      if (who === "me") {
+        myMsgs.push({ el: row.readEl, time: m.time });
+        updateReadMarks();
+      } else {
+        scheduleMarkRead();
+        if (loaded && !viewMode) playPop();
+      }
     }
+    rowsByKey[snap.key] = row;
+    if (viewMode) addDeleteButton(row, snap.key);
+  });
+  listening.on("child_removed", function(snap) {
+    const row = rowsByKey[snap.key];
+    if (!row) return;
+    myMsgs = myMsgs.filter(function(it) { return it.el !== row.readEl; });
+    row.remove();
+    delete rowsByKey[snap.key];
   });
   listening.once("value", function() { loaded = true; });
+}
+
+function addDeleteButton(row, key) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "del-btn";
+  btn.textContent = "×";
+  btn.setAttribute("aria-label", "このメッセージを消す");
+  btn.onclick = function() { deleteMessage(key); };
+  row.appendChild(btn);
+}
+
+function deleteMessage(key) {
+  if (!confirm("このメッセージを消します。元に戻せません。ええですか?")) return;
+  roomRef.child(key).remove().then(function() {
+    recordAdminAction("delete-message", roomName);
+  }).catch(function(err) {
+    alert("消せませんでした (" + err.code + ")");
+  });
 }
 
 function addSystem(text) {
@@ -305,6 +368,8 @@ function addSystem(text) {
   row.appendChild(s);
   log.appendChild(row);
   log.scrollTop = log.scrollHeight;
+  lastRowInfo = null;
+  return row;
 }
 
 function sendSystem(text) {
@@ -351,6 +416,10 @@ document.addEventListener("visibilitychange", function() {
 });
 
 function leave() {
+  if (!viewMode && roomRef) {
+    sendSystem(nickname + "さんが退室しました");
+  }
+  if (leaveRef) { leaveRef.onDisconnect().cancel(); leaveRef = null; }
   if (listening) { listening.off(); listening = null; }
   roomRef = null;
   if (readsRef) { readsRef.off(); readsRef = null; }
@@ -410,10 +479,18 @@ function addMessage(who, name, text, ts) {
   line.appendChild(meta);
   msg.appendChild(nameTag);
   msg.appendChild(line);
+  const minute = Math.floor((ts || Date.now()) / 60000);
+  if (lastRowInfo && lastRowInfo.who === who && lastRowInfo.name === name && lastRowInfo.minute === minute) {
+    row.className += " cont";
+    lastRowInfo.meta.style.display = "none";
+  }
+  lastRowInfo = { who: who, name: name, minute: minute, meta: meta };
+
   row.appendChild(msg);
   log.appendChild(row);
   log.scrollTop = log.scrollHeight;
-  return readEl;
+  row.readEl = readEl;
+  return row;
 }
 
 function send() {
@@ -522,6 +599,10 @@ function loadAdminLog() {
         label = "削除";
         color = "#e65100";
         tail = "  " + (it.v.detail || "") + "のルームを削除";
+      } else if (code === "delete-message") {
+        label = "削除";
+        color = "#e65100";
+        tail = "  " + (it.v.detail || "") + "のメッセージを1件削除";
       }
       const badge = document.createElement("b");
       badge.textContent = label;
